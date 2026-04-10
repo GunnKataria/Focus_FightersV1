@@ -24,7 +24,8 @@ export default function LeftPanel({
   return (
     <aside
       style={{
-        gridRow: "1/4",
+        gridRow: "1 / 4",            // ← ADD THIS
+        gridColumn: 1,               // ← ADD THIS
         background: "var(--bg-mid)",
         borderRight: "1px solid var(--border)",
         padding: "1rem",
@@ -149,13 +150,12 @@ export default function LeftPanel({
                 padding: ".4rem .6rem",
                 background: "var(--bg-elevated)",
                 borderRadius: 6,
-                border: `1px solid ${
-                  p.status === "focused"
+                border: `1px solid ${p.status === "focused"
                     ? "rgba(82,224,122,.3)"
                     : p.status === "distracted"
-                    ? "rgba(224,92,92,.3)"
-                    : "rgba(245,200,66,.3)"
-                }`,
+                      ? "rgba(224,92,92,.3)"
+                      : "rgba(245,200,66,.3)"
+                  }`,
               }}
             >
               <span style={{ fontSize: "1.3rem" }}>{p.avatar}</span>
@@ -171,15 +171,15 @@ export default function LeftPanel({
                       p.status === "focused"
                         ? "var(--accent-green)"
                         : p.status === "distracted"
-                        ? "var(--accent-red)"
-                        : "var(--accent-gold)",
+                          ? "var(--accent-red)"
+                          : "var(--accent-gold)",
                   }}
                 >
                   {p.status === "focused"
                     ? "🟢 Focused"
                     : p.status === "distracted"
-                    ? "🔴 Distracted"
-                    : "🟡 Warning"}
+                      ? "🔴 Distracted"
+                      : "🟡 Warning"}
                 </div>
               </div>
             </div>

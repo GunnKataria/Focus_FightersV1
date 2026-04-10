@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { DEMO_SQUAD, DEMO_ROOMS } from "../constants";
 import { useApp } from "../context/AppContext";
+import { useAuth } from "../context/AuthContext";
 import Btn from "../components/ui/Btn";
 import Card from "../components/ui/Card";
 import InputField from "../components/ui/InputField";
@@ -9,6 +10,7 @@ import PlayerCard from "../components/game/PlayerCard";
 
 export default function LobbyScreen({ player, onStartRaid }) {
   const { push } = useApp();
+  const { googleAvatar, googleName, signOut } = useAuth();
   const [roomName, setRoomName] = useState("");
   const [duration, setDuration] = useState(25);
   const [bossType, setBossType] = useState("🐲");
@@ -92,24 +94,36 @@ export default function LobbyScreen({ player, onStartRaid }) {
               fontFamily: "var(--font-display)",
               fontSize: "1.4rem",
               textShadow: "0 0 30px rgba(124,92,224,.6)",
+              marginBottom: "1rem"
             }}
           >
             ⚔️ Focus Fighters
           </div>
-          <div
-            style={{
-              fontFamily: "var(--font-heading)",
-              fontSize: ".7rem",
-              letterSpacing: ".15em",
-              textTransform: "uppercase",
-              color: "var(--text-muted)",
-              marginTop: ".25rem",
-            }}
-          >
-            Welcome,{" "}
-            <span style={{ color: "var(--accent-violet)" }}>{player.name}</span>
+          
+          <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
+            {/* Google profile photo */}
+            {googleAvatar ? (
+              <img
+                src={googleAvatar}
+                alt="profile"
+                style={{ width: 36, height: 36, borderRadius: "50%", border: "2px solid var(--accent-violet)", objectFit: "cover" }}
+              />
+            ) : (
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--bg-elevated)", border: "2px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem" }}>
+                {player.avatar}
+              </div>
+            )}
+            <div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: ".85rem", color: "var(--text-primary)" }}>
+                {player.name}
+              </div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: ".65rem", color: "var(--text-muted)", letterSpacing: ".1em" }}>
+                {googleName}
+              </div>
+            </div>
           </div>
         </div>
+        
         <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
           {[
             ["⚡", "XP", player.xp],
@@ -132,6 +146,11 @@ export default function LobbyScreen({ player, onStartRaid }) {
               <span style={{ color: "var(--text-primary)", fontWeight: 700 }}>{val}</span>
             </div>
           ))}
+          
+          {/* Sign out button */}
+          <div style={{ marginLeft: "1rem", borderLeft: "1px solid var(--border)", paddingLeft: "1rem" }}>
+            <Btn variant="ghost" size="sm" onClick={signOut}>Sign Out</Btn>
+          </div>
         </div>
       </div>
 

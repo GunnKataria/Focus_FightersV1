@@ -16,7 +16,8 @@ export default function RightPanel({
   return (
     <aside
       style={{
-        gridRow: "1/4",
+        gridRow: "1 / 4",            // ← ADD THIS
+        gridColumn: 3,               // ← ADD THIS
         background: "var(--bg-mid)",
         borderLeft: "1px solid var(--border)",
         padding: "1rem",

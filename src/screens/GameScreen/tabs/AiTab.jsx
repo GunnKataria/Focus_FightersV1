@@ -10,10 +10,15 @@ export default function AiTab({
   sendAi,
 }) {
   const quickPrompts = [
-    "Summarize the key points",
-    "What are the most important definitions?",
-    "Create a quiz question",
+    { label: "📝 Summarize", prompt: "Summarize the key points" },
+    { label: "📖 Definitions", prompt: "What are the most important definitions?" },
+    { label: "❓ Quiz Me", prompt: "Create a quiz question from this material" },
   ];
+
+  const handleQuickPrompt = (prompt) => {
+    setAiInput(prompt);
+    setTimeout(() => sendAi(prompt), 50);
+  };
 
   return (
     <div className="animate-fade">
@@ -33,18 +38,14 @@ export default function AiTab({
           flexWrap: "wrap",
         }}
       >
-        {quickPrompts.map((q) => (
+        {quickPrompts.map(({ label, prompt }) => (
           <Btn
-            key={q}
+            key={prompt}
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setAiInput(q);
-              // Small delay lets state update before sending
-              setTimeout(sendAi, 50);
-            }}
+            onClick={() => handleQuickPrompt(prompt)}
           >
-            {q.split(" ").slice(0, 2).join(" ")}
+            {label}
           </Btn>
         ))}
       </div>

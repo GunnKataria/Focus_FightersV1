@@ -295,19 +295,36 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
           .join(" ")}`
     ).join("\n\n");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system:
-            "Generate structured HTML study notes. Use <h3> for headings, <p> for paragraphs, <ul><li> for bullets, <strong> for key terms. No html/body tags. Under 600 words.",
-          messages: [{ role: "user", content: `Generate notes from:\n${material}` }],
-        }),
-      });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{
+                text: "Generate structured HTML study notes. Use <h3> for headings, <p> for paragraphs, <ul><li> for bullets, <strong> for key terms. No html/body tags. Under 600 words. Return only the HTML, no markdown code fences."
+              }]
+            },
+            contents: [{
+              role: "user",
+              parts: [{ text: `Generate notes from:\n${material}` }]
+            }],
+          }),
+        }
+      );
       const data = await res.json();
-      const text = data.content?.map((b) => b.text || "").join("") || fallbackNotes();
+      // ── Handle error responses ──────────────────────────
+      if (!res.ok) {
+        const errorMsg = res.status === 429
+          ? "⏳ The oracle is overwhelmed — wait a moment and try again!"
+          : `⚠️ The oracle returned an error (${res.status}). Try again!`;
+        setAiMessages((prev) => [...prev, { role: "ai", text: errorMsg }]);
+        setAiLoading(false);
+        return;
+      }
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || fallbackNotes();
       setNotes(text);
     } catch {
       setNotes(fallbackNotes());
@@ -322,9 +339,9 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
   const fallbackNotes = () =>
     `<h3>⚛️ Quantum Mechanics</h3><p>Quantum mechanics describes atomic-scale behavior with probabilistic outcomes.</p><h3>Core Principles</h3><ul><li><strong>Wave-Particle Duality:</strong> Quantum objects show both wave and particle properties</li><li><strong>Superposition:</strong> Particles in multiple states simultaneously</li><li><strong>Uncertainty Principle:</strong> Δx·Δp ≥ ℏ/2</li></ul><h3>Quantum Computing</h3><ul><li><strong>Qubit:</strong> α|0⟩ + β|1⟩ — superposition of basis states</li><li><strong>Shor's Algorithm:</strong> Exponential speedup for factoring</li></ul>`;
 
-  const sendAi = async () => {
-    if (!aiInput.trim() || aiLoading) return;
-    const msg = aiInput.trim();
+  const sendAi = async (overrideMsg) => {
+    const msg = (typeof overrideMsg === "string" ? overrideMsg : aiInput).trim();
+    if (!msg || aiLoading) return;
     setAiInput("");
     setAiMessages((prev) => [...prev, { role: "user", text: msg }]);
     setAiLoading(true);
@@ -333,19 +350,34 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
       .join(" ")
       .substring(0, 600) || "";
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: `You are an RPG-themed AI study assistant in Focus Fighters. Current study material:\n${material}\nBe concise (<120 words), slightly dramatic, and helpful. Use 1-2 emoji max.`,
-          messages: [{ role: "user", content: msg }],
-        }),
-      });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{
+                text: `You are an RPG-themed AI study assistant in Focus Fighters. Current study material:\n${material}\nBe concise (<120 words), slightly dramatic, and helpful. Use 1-2 emoji max.`
+              }]
+            },
+            contents: [{ role: "user", parts: [{ text: msg }] }],
+          }),
+        }
+      );
       const data = await res.json();
+      // ── Handle error responses ──────────────────────────
+      if (!res.ok) {
+        const errorMsg = res.status === 429
+          ? "⏳ The oracle is overwhelmed — wait a moment and try again!"
+          : `⚠️ The oracle returned an error (${res.status}). Try again!`;
+        setAiMessages((prev) => [...prev, { role: "ai", text: errorMsg }]);
+        setAiLoading(false);
+        return;
+      }
       const text =
-        data.content?.map((b) => b.text || "").join("") ||
+        data.candidates?.[0]?.content?.parts?.[0]?.text ||
         "The arcane connection faltered… try again.";
       setAiMessages((prev) => [...prev, { role: "ai", text }]);
     } catch {
@@ -356,7 +388,6 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
     }
     setAiLoading(false);
   };
-
   // ── Derived values ────────────────────────────────────────
   const dps =
     ((focused ? 1 : 0) + squad.filter((p) => p.status === "focused").length) * 3 +
@@ -401,6 +432,8 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
       {/* TOP BAR */}
       <header
         style={{
+          gridColumn: 2,        // ← ADD THIS
+          gridRow: 1,           // ← ADD THIS
           background: "var(--bg-surface)",
           borderBottom: "1px solid var(--border)",
           padding: ".7rem 1.25rem",
@@ -488,6 +521,8 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
       {/* CENTER MAIN */}
       <main
         style={{
+          gridColumn: 2,        // ← ADD THIS
+          gridRow: 2,           // ← ADD THIS
           padding: "1rem 1.25rem",
           overflowY: "auto",
           display: "flex",
@@ -543,6 +578,8 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
       {/* BOTTOM BAR */}
       <footer
         style={{
+          gridColumn: 2,        // ← ADD THIS
+          gridRow: 3,           // ← ADD THIS
           background: "var(--bg-surface)",
           borderTop: "1px solid var(--border)",
           padding: ".6rem 1.25rem",
