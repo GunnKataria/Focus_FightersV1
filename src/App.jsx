@@ -7,53 +7,44 @@ import NotifContainer from "./components/layout/NotifContainer";
 import LoginScreen from "./screens/LoginScreen";
 import LobbyScreen from "./screens/LobbyScreen";
 import GameScreen from "./screens/GameScreen";
-import { AVATARS } from "./constants";
 
-// Inner app — has access to AuthContext
 function AppInner() {
   const { notifs, push } = useNotifications();
-  const { session, authLoading, googleName, googleAvatar, signOut } = useAuth();
+  const { authLoading, isLoggedIn, profile, signOut } = useAuth();
 
-  const [screen, setScreen] = useState("login");
-  const [player, setPlayer] = useState({
-    name: "",
-    avatar: "🧙",
-    xp: 0,
-    coins: 0,
-    level: 1,
-    xpToNext: 100,
-    photoUrl: null,
-  });
+  const [screen, setScreen]       = useState("login");
+  const [player, setPlayer]       = useState(null);
   const [activeRoom, setActiveRoom] = useState(null);
 
-  // ── Auto-redirect based on session ──────────────────────────
+  // ── Sync player state from profile ──────────────────────────
   useEffect(() => {
     if (authLoading) return;
 
-    if (session) {
-      // Seed player from Google profile (only on first login)
-      setPlayer((p) => ({
-        ...p,
-        name: p.name || googleName || "Warrior",
-        photoUrl: p.photoUrl || googleAvatar || null,
-        // Pick a random avatar if they haven't customised yet
-        avatar: p.avatar || AVATARS[Math.floor(Math.random() * AVATARS.length)],
-      }));
-      // Only redirect to lobby if we're on the login screen
-      setScreen((s) => (s === "login" ? "lobby" : s));
+    if (isLoggedIn && profile) {
+      setPlayer({
+        name:     profile.display_name,
+        avatar:   profile.avatar_emoji,
+        photoUrl: profile.photo_url,
+        email:    profile.email,
+        xp:       profile.xp       ?? 0,
+        coins:    profile.coins     ?? 0,
+        level:    profile.level     ?? 1,
+        xpToNext: profile.xp_to_next ?? 100,
+        isGuest:  profile.is_guest  ?? false,
+      });
+      setScreen(s => s === "login" ? "lobby" : s);
       if (screen === "login") {
-        push(`Welcome back, ${googleName?.split(" ")[0] || "Warrior"}! ⚔️`, "success");
+        push(`Welcome, ${profile.display_name?.split(" ")[0]}! ⚔️`, "success");
       }
-    } else {
-      // Session expired or signed out — back to login
+    } else if (!isLoggedIn) {
       setScreen("login");
+      setPlayer(null);
     }
-  }, [session, authLoading]);
+  }, [isLoggedIn, profile, authLoading]);
 
   const handleStartRaid = (room) => { setActiveRoom(room); setScreen("game"); };
-  const handleGoLobby = () => { setScreen("lobby"); setActiveRoom(null); };
+  const handleGoLobby   = () => { setScreen("lobby"); setActiveRoom(null); };
 
-  // Show nothing while checking session (prevents flash)
   if (authLoading) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -70,25 +61,9 @@ function AppInner() {
         <StarField />
         <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse 80% 50% at 20% 0%,rgba(124,92,224,.1) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 80% 100%,rgba(82,224,122,.05) 0%,transparent 60%)", pointerEvents: "none", zIndex: 0 }} />
 
-        {screen === "login" && <LoginScreen />}
-
-        {screen === "lobby" && (
-          <LobbyScreen
-            player={player}
-            onUpdatePlayer={setPlayer}
-            onStartRaid={handleStartRaid}
-            onSignOut={signOut}
-          />
-        )}
-
-        {screen === "game" && (
-          <GameScreen
-            player={player}
-            room={activeRoom}
-            onUpdatePlayer={setPlayer}
-            onGoLobby={handleGoLobby}
-          />
-        )}
+        {screen === "login"  && <LoginScreen />}
+        {screen === "lobby"  && player && <LobbyScreen player={player} onUpdatePlayer={setPlayer} onStartRaid={handleStartRaid} />}
+        {screen === "game"   && player && <GameScreen  player={player} room={activeRoom} onUpdatePlayer={setPlayer} onGoLobby={handleGoLobby} />}
 
         <NotifContainer notifs={notifs} />
       </div>
