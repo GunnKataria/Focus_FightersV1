@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AppContext } from "./context/AppContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { useNotifications } from "./hooks/useNotifications";
+import { useMultiplayer } from "./hooks/useMultiplayer";
 import StarField from "./components/layout/StarField";
 import NotifContainer from "./components/layout/NotifContainer";
 import LoginScreen from "./screens/LoginScreen";
@@ -11,6 +12,10 @@ import GameScreen from "./screens/GameScreen";
 function AppInner() {
   const { notifs, push } = useNotifications();
   const { authLoading, isLoggedIn, profile, signOut } = useAuth();
+  // Hoisted here (not inside LobbyScreen) so liveRoom / liveMembers / channels
+  // survive navigation Lobby → Game. Previously the hook unmounted with
+  // LobbyScreen, tearing down the realtime channel and dropping shared state.
+  const multiplayer = useMultiplayer(profile);
 
   const [screen, setScreen]       = useState("login");
   const [player, setPlayer]       = useState(null);
@@ -56,7 +61,7 @@ function AppInner() {
   }
 
   return (
-    <AppContext.Provider value={{ push }}>
+    <AppContext.Provider value={{ push, multiplayer }}>
       <div style={{ position: "relative", minHeight: "100vh" }}>
         <StarField />
         <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse 80% 50% at 20% 0%,rgba(124,92,224,.1) 0%,transparent 60%),radial-gradient(ellipse 60% 40% at 80% 100%,rgba(82,224,122,.05) 0%,transparent 60%)", pointerEvents: "none", zIndex: 0 }} />

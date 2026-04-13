@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { DEMO_SQUAD, DEMO_ROOMS, AVATARS } from "../constants";
+import { useState, useRef, useEffect } from "react";
+import { AVATARS } from "../constants";
 import { useApp } from "../context/AppContext";
 import { useAuth } from "../context/AuthContext";
 import Btn from "../components/ui/Btn";
@@ -8,32 +8,40 @@ import Modal from "../components/ui/Modal";
 import InputField from "../components/ui/InputField";
 import { RuneDivider, Label, SectionTitle } from "../components/ui/Typography";
 import PlayerCard from "../components/game/PlayerCard";
+import FriendsPanel from "../components/game/FriendsPanel";
+import InviteBanner from "../components/game/InviteBanner";
 
 export default function LobbyScreen({ player, onUpdatePlayer, onStartRaid }) {
-  const { push } = useApp();
+  const { push, multiplayer } = useApp();
   const { profile, googleAvatar, signOut, updateProfile, uploadAvatar } = useAuth();
+  const {
+    liveRoom, liveMembers, friends, pendingInvites, loadingRoom,
+    searchByEmail, sendFriendRequest, respondFriendRequest,
+    removeFriend, createLiveRoom, joinLiveRoomByCode, leaveLiveRoom,
+    startLiveRoom, inviteFriend, acceptInvite, declineInvite,
+  } = multiplayer;
 
-  // ── Room state ───────────────────────────────────────────────
-  const [roomName, setRoomName]       = useState("");
-  const [duration, setDuration]       = useState(25);
-  const [bossType, setBossType]       = useState("🐲");
-  const [joinCode, setJoinCode]       = useState("");
-  const [room, setRoom]               = useState(null);
-  const [isHost, setIsHost]           = useState(false);
-  const [squadExtras, setSquadExtras] = useState(0);
+  // ── Room form state ──────────────────────────────────────────
+  const [roomName, setRoomName] = useState("");
+  const [duration, setDuration] = useState(25);
+  const [bossType, setBossType] = useState("🐲");
+  const [joinCode, setJoinCode] = useState("");
 
-  // ── Profile modal state ──────────────────────────────────────
-  const [profileOpen, setProfileOpen]     = useState(false);
-  const [editName, setEditName]           = useState("");
-  const [editAvatar, setEditAvatar]       = useState("");
-  const [previewUrl, setPreviewUrl]       = useState(""); // local blob preview
-  const [uploadFile, setUploadFile]       = useState(null); // File object to upload
-  const [saving, setSaving]               = useState(false);
-  const [uploading, setUploading]         = useState(false);
-  const [dragOver, setDragOver]           = useState(false);
+  // ── UI state ─────────────────────────────────────────────────
+  const [activePanel, setActivePanel] = useState("rooms"); // "rooms" | "friends"
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  // ── Profile edit state ───────────────────────────────────────
+  const [editName, setEditName] = useState("");
+  const [editAvatar, setEditAvatar] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [uploadFile, setUploadFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  // ── Open profile modal ───────────────────────────────────────
+  // ── Profile handlers ─────────────────────────────────────────
   const openProfile = () => {
     setEditName(profile?.display_name ?? player.name);
     setEditAvatar(profile?.avatar_emoji ?? player.avatar);
@@ -42,91 +50,88 @@ export default function LobbyScreen({ player, onUpdatePlayer, onStartRaid }) {
     setProfileOpen(true);
   };
 
-  // ── Handle image file selection ──────────────────────────────
   const handleImageFile = (file) => {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      push("⚠️ Please select an image file", "danger"); return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      push("⚠️ Image must be under 5MB", "danger"); return;
-    }
+    if (!file.type.startsWith("image/")) { push("⚠️ Select an image file", "danger"); return; }
+    if (file.size > 5 * 1024 * 1024) { push("⚠️ Image must be under 5MB", "danger"); return; }
     setUploadFile(file);
-    setPreviewUrl(URL.createObjectURL(file)); // instant local preview
+    setPreviewUrl(URL.createObjectURL(file));
   };
 
-  const handleFileInput = (e) => handleImageFile(e.target.files?.[0]);
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    handleImageFile(e.dataTransfer.files?.[0]);
-  };
-
-  const removePhoto = () => {
-    setUploadFile(null);
-    setPreviewUrl("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  // ── Save profile ─────────────────────────────────────────────
   const saveProfile = async () => {
     if (!editName.trim()) return;
     setSaving(true);
-
     let photoUrl = profile?.photo_url ?? null;
-
-    // Upload new image if one was selected
     if (uploadFile) {
       setUploading(true);
       const url = await uploadAvatar(uploadFile);
       setUploading(false);
-      if (url) {
-        photoUrl = url;
-      } else {
-        push("⚠️ Image upload failed, profile saved without new photo", "danger");
-      }
+      if (url) photoUrl = url;
+      else push("⚠️ Image upload failed", "danger");
     } else if (previewUrl === "") {
-      // User explicitly removed photo
       photoUrl = null;
     }
-
-    await updateProfile({
-      display_name: editName.trim(),
-      avatar_emoji: editAvatar,
-      photo_url:    photoUrl,
-    });
-
-    onUpdatePlayer(p => ({
-      ...p,
-      name:     editName.trim(),
-      avatar:   editAvatar,
-      photoUrl: photoUrl,
-    }));
-
+    await updateProfile({ display_name: editName.trim(), avatar_emoji: editAvatar, photo_url: photoUrl });
+    onUpdatePlayer(p => ({ ...p, name: editName.trim(), avatar: editAvatar, photoUrl }));
     setSaving(false);
     setProfileOpen(false);
     push("✅ Profile updated!", "success");
   };
 
-  // ── Room helpers ─────────────────────────────────────────────
-  const createRoom = () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    setRoom({ name: roomName || "Study Session", duration, boss: bossType, code });
-    setIsHost(true);
-    push(`Room created! Code: ${code}`, "success");
-    setTimeout(() => { setSquadExtras(1); push(`${DEMO_SQUAD[0].name} joined!`, "info"); }, 1200);
-    setTimeout(() => { setSquadExtras(2); push(`${DEMO_SQUAD[1].name} joined!`, "info"); }, 2200);
+  // ── Room handlers ─────────────────────────────────────────────
+  const handleCreateRoom = async () => {
+  console.log("[UI] handleCreateRoom called");
+  const room = await createLiveRoom({
+    name: roomName || "Study Session",
+    duration,
+    boss: bossType,
+  });
+  if (room) {
+    push(`Room created! Code: ${room.code}`, "success");
+  } else {
+    push("⚠️ Failed to create room — try again", "danger");
+  }
+};
+  const handleJoinRoom = async (codeOverride) => {
+    const code = codeOverride || joinCode;
+    if (!code.trim()) return;
+    const room = await joinLiveRoomByCode(code);
+    if (room) push(`Joined ${room.name}!`, "success");
+    else push("⚠️ Room not found or already started", "danger");
   };
 
-  const joinRoom = (r) => {
-    setRoom(r || { name: "Study Session", duration: 25, boss: "🐲", code: joinCode.toUpperCase() });
-    setIsHost(false);
-    push("Joined room!", "success");
-    setTimeout(() => { setSquadExtras(1); push(`${DEMO_SQUAD[0].name} is here!`, "info"); }, 800);
+  const handleStartRaid = async () => {
+    if (!liveRoom) return;
+    // Host writes status='active' to the DB so all members receive a
+    // postgres_changes event. Without this, non-host clients sit forever
+    // on "Waiting for host to start…" because nothing flips the flag.
+    const updated = await startLiveRoom();
+    const room = updated || liveRoom;
+    onStartRaid({ ...room, members: liveMembers });
   };
 
-  const squad        = [player, ...DEMO_SQUAD.slice(0, squadExtras)];
+  // Non-host auto-navigation: when realtime delivers status='active', jump
+  // into the game screen the same way the host does. Fires exactly once
+  // because LobbyScreen unmounts on navigation.
+  const isHostRef = useRef(false);
+  isHostRef.current = liveRoom?.host_id === profile?.id;
+  useEffect(() => {
+    if (liveRoom?.status === "active" && !isHostRef.current) {
+      onStartRaid({ ...liveRoom, members: liveMembers });
+    }
+  }, [liveRoom?.status, liveRoom?.id]);
+
+  const handleAcceptInvite = async (invite) => {
+    const room = await acceptInvite(invite);
+    if (room) push(`Joined ${room.name}!`, "success");
+  };
+
+  const handleInviteFriend = async (friendId) => {
+    await inviteFriend(friendId, liveRoom);
+    push("⚔️ Invite sent!", "success");
+  };
+
+  const isHost = liveRoom?.host_id === profile?.id;
   const displayPhoto = player.photoUrl || googleAvatar;
 
   const selectStyle = {
@@ -138,12 +143,18 @@ export default function LobbyScreen({ player, onUpdatePlayer, onStartRaid }) {
   return (
     <div style={{ minHeight: "100vh", position: "relative", zIndex: 1, padding: "2rem", display: "flex", flexDirection: "column", alignItems: "center" }}>
 
+      {/* ── Live invite banners ── */}
+      <InviteBanner
+        invites={pendingInvites}
+        onAccept={handleAcceptInvite}
+        onDecline={declineInvite}
+      />
+
       {/* ── Header ── */}
-      <div style={{ width: "100%", maxWidth: 900, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
+      <div style={{ width: "100%", maxWidth: 1000, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
         <div style={{ fontFamily: "var(--font-display)", fontSize: "1.4rem", textShadow: "0 0 30px rgba(124,92,224,.6)" }}>
           ⚔️ Focus Fighters
         </div>
-
         <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
           {[["⚡", "XP", player.xp], ["🪙", "", player.coins], ["🏆", "Lv.", player.level]].map(([icon, label, val]) => (
             <div key={icon} style={{ display: "flex", alignItems: "center", gap: ".35rem", fontFamily: "var(--font-heading)", fontSize: ".82rem", color: "var(--text-secondary)" }}>
@@ -151,117 +162,216 @@ export default function LobbyScreen({ player, onUpdatePlayer, onStartRaid }) {
               <span style={{ color: "var(--text-primary)", fontWeight: 700 }}>{val}</span>
             </div>
           ))}
-
           <div style={{ width: 1, height: 28, background: "var(--border)" }} />
-
-          {/* Clickable profile chip */}
-          <div
-            onClick={openProfile}
-            title="Edit Profile"
+          <div onClick={openProfile} title="Edit Profile"
             style={{ display: "flex", alignItems: "center", gap: ".6rem", cursor: "pointer", padding: ".4rem .75rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-elevated)", transition: "all .2s" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--accent-violet)"; e.currentTarget.style.background = "var(--bg-card)"; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--bg-elevated)"; }}
-          >
-            {displayPhoto ? (
-              <img src={displayPhoto} alt="avatar" style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--accent-violet)" }} />
-            ) : (
-              <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--bg-surface)", border: "2px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" }}>
-                {player.avatar}
-              </div>
-            )}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--bg-elevated)"; }}>
+            {displayPhoto
+              ? <img src={displayPhoto} alt="avatar" style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--accent-violet)" }} />
+              : <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--bg-surface)", border: "2px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" }}>{player.avatar}</div>
+            }
             <div>
-              <div style={{ fontFamily: "var(--font-heading)", fontSize: ".78rem", color: "var(--text-primary)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {player.name}
-              </div>
-              <div style={{ fontFamily: "var(--font-heading)", fontSize: ".6rem", color: "var(--accent-violet)", letterSpacing: ".05em" }}>
-                {profile?.is_guest ? "👤 Guest" : "✏️ Edit Profile"}
-              </div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: ".78rem", color: "var(--text-primary)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{player.name}</div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: ".6rem", color: "var(--accent-violet)", letterSpacing: ".05em" }}>{profile?.is_guest ? "👤 Guest" : "✏️ Edit Profile"}</div>
             </div>
           </div>
-
-          <Btn variant="ghost" size="sm" onClick={signOut}>
-            {profile?.is_guest ? "Sign In" : "Sign Out"}
-          </Btn>
+          <Btn variant="ghost" size="sm" onClick={signOut}>{profile?.is_guest ? "Sign In" : "Sign Out"}</Btn>
         </div>
       </div>
 
-      {/* ── Room Grid ── */}
-      <div style={{ width: "100%", maxWidth: 900, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
-
-        <Card>
-          <div style={{ fontFamily: "var(--font-heading)", fontSize: "1rem", color: "var(--accent-violet)", marginBottom: "1rem" }}>⚔️ Create a Boss Raid</div>
-          <div style={{ marginBottom: ".85rem" }}>
-            <Label style={{ display: "block", marginBottom: ".4rem" }}>Session Name</Label>
-            <InputField value={roomName} onChange={e => setRoomName(e.target.value)} placeholder="e.g. Biology Finals…" />
-          </div>
-          <div style={{ marginBottom: ".85rem" }}>
-            <Label style={{ display: "block", marginBottom: ".4rem" }}>Duration</Label>
-            <select value={duration} onChange={e => setDuration(Number(e.target.value))} style={selectStyle}>
-              <option value={25}>25 minutes (Pomodoro)</option>
-              <option value={45}>45 minutes (Standard)</option>
-              <option value={60}>60 minutes (Endurance)</option>
-            </select>
-          </div>
-          <div style={{ marginBottom: "1rem" }}>
-            <Label style={{ display: "block", marginBottom: ".4rem" }}>Boss</Label>
-            <select value={bossType} onChange={e => setBossType(e.target.value)} style={selectStyle}>
-              <option value="🐲">🐲 Shadow Drake — Medium</option>
-              <option value="💀">💀 Lich King — Hard</option>
-              <option value="👾">👾 Void Titan — Extreme</option>
-              <option value="🧿">🧿 Crystal Golem — Easy</option>
-            </select>
-          </div>
-          <Btn variant="primary" style={{ width: "100%" }} onClick={createRoom}>Create Raid Room</Btn>
-        </Card>
-
-        <Card>
-          <div style={{ fontFamily: "var(--font-heading)", fontSize: "1rem", color: "var(--accent-gold)", marginBottom: "1rem" }}>🔗 Join a Raid</div>
-          <div style={{ marginBottom: ".85rem" }}>
-            <Label style={{ display: "block", marginBottom: ".4rem" }}>Room Code</Label>
-            <InputField value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} placeholder="Enter 6-digit code…" style={{ letterSpacing: ".2em", fontFamily: "var(--font-heading)" }} />
-          </div>
-          <Btn variant="gold" style={{ width: "100%", marginBottom: "1rem" }} onClick={() => joinRoom(null)}>Join Raid</Btn>
-          <RuneDivider glyph="or" />
-          <SectionTitle style={{ marginTop: ".75rem" }}>Active Rooms</SectionTitle>
-          <div style={{ display: "flex", flexDirection: "column", gap: ".5rem", marginTop: ".4rem" }}>
-            {DEMO_ROOMS.map(r => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: ".6rem .75rem", background: "var(--bg-elevated)", borderRadius: 6, border: "1px solid var(--border)" }}>
-                <div>
-                  <div style={{ fontFamily: "var(--font-heading)", fontSize: ".82rem" }}>{r.boss} {r.name}</div>
-                  <Label>{r.players} players · {r.duration}min</Label>
-                </div>
-                <Btn variant="ghost" size="sm" onClick={() => joinRoom(r)}>Join</Btn>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {room && (
-          <div style={{ gridColumn: "1/-1" }}>
-            <Card glow>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-                <div>
-                  <div style={{ fontFamily: "var(--font-heading)", fontSize: "1.1rem" }}>⚔️ {room.name}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: ".25rem" }}>
-                    <Label>Room Code:</Label>
-                    <span style={{ fontFamily: "var(--font-heading)", color: "var(--accent-gold)", fontSize: "1rem", letterSpacing: ".2em" }}>{room.code}</span>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: ".5rem" }}>
-                  <Btn variant="ghost" size="sm" onClick={() => setRoom(null)}>Leave</Btn>
-                  {isHost && <Btn variant="primary" onClick={() => onStartRaid(room)}>⚔️ Start Raid</Btn>}
-                </div>
-              </div>
-              <SectionTitle>Warriors ({squad.length}/6)</SectionTitle>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: ".75rem", marginTop: ".5rem" }}>
-                {squad.map((p, i) => (
-                  <PlayerCard key={p.id || "me"} player={p} status="focused" showHost={i === 0} />
-                ))}
-              </div>
-            </Card>
+      {/* ── Tab switcher ── */}
+      <div style={{ width: "100%", maxWidth: 1000, display: "flex", gap: ".5rem", marginBottom: "1.25rem" }}>
+        {[["rooms", "⚔️ Raids"], ["friends", `👥 Friends${friends.filter(f => f.status === "accepted").length ? ` (${friends.filter(f => f.status === "accepted").length})` : ""}`]].map(([id, label]) => (
+          <button key={id} onClick={() => setActivePanel(id)} style={{
+            fontFamily: "var(--font-heading)", fontSize: ".8rem", letterSpacing: ".1em",
+            textTransform: "uppercase", padding: ".6rem 1.5rem", borderRadius: 6,
+            background: activePanel === id ? "rgba(124,92,224,.2)" : "transparent",
+            border: `1px solid ${activePanel === id ? "var(--accent-violet)" : "var(--border)"}`,
+            color: activePanel === id ? "var(--accent-violet)" : "var(--text-muted)",
+            cursor: "pointer", transition: "all .2s",
+          }}>{label}</button>
+        ))}
+        {/* Pending invite badge */}
+        {friends.filter(f => f.status === "pending" && !f.isRequester).length > 0 && (
+          <div onClick={() => setActivePanel("friends")} style={{ display: "flex", alignItems: "center", gap: ".4rem", padding: ".6rem 1rem", borderRadius: 6, background: "rgba(245,200,66,.1)", border: "1px solid rgba(245,200,66,.3)", cursor: "pointer" }}>
+            <span style={{ fontFamily: "var(--font-heading)", fontSize: ".75rem", color: "var(--accent-gold)" }}>
+              📬 {friends.filter(f => f.status === "pending" && !f.isRequester).length} request{friends.filter(f => f.status === "pending" && !f.isRequester).length > 1 ? "s" : ""}
+            </span>
           </div>
         )}
       </div>
+
+      {/* ── RAIDS PANEL ── */}
+      {activePanel === "rooms" && (
+        <div style={{ width: "100%", maxWidth: 1000, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+
+          {/* Create Room */}
+          <Card>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "1rem", color: "var(--accent-violet)", marginBottom: "1rem" }}>⚔️ Create a Boss Raid</div>
+            <div style={{ marginBottom: ".85rem" }}>
+              <Label style={{ display: "block", marginBottom: ".4rem" }}>Session Name</Label>
+              <InputField value={roomName} onChange={e => setRoomName(e.target.value)} placeholder="e.g. Biology Finals…" />
+            </div>
+            <div style={{ marginBottom: ".85rem" }}>
+              <Label style={{ display: "block", marginBottom: ".4rem" }}>Duration</Label>
+              <select value={duration} onChange={e => setDuration(Number(e.target.value))} style={selectStyle}>
+                <option value={25}>25 minutes (Pomodoro)</option>
+                <option value={45}>45 minutes (Standard)</option>
+                <option value={60}>60 minutes (Endurance)</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: "1rem" }}>
+              <Label style={{ display: "block", marginBottom: ".4rem" }}>Boss</Label>
+              <select value={bossType} onChange={e => setBossType(e.target.value)} style={selectStyle}>
+                <option value="🐲">🐲 Shadow Drake — Medium</option>
+                <option value="💀">💀 Lich King — Hard</option>
+                <option value="👾">👾 Void Titan — Extreme</option>
+                <option value="🧿">🧿 Crystal Golem — Easy</option>
+              </select>
+            </div>
+            <Btn variant="primary" style={{ width: "100%" }} onClick={handleCreateRoom} disabled={loadingRoom}>
+              {loadingRoom ? "Creating…" : "Create Raid Room"}
+            </Btn>
+          </Card>
+
+          {/* Join Room */}
+          <Card>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "1rem", color: "var(--accent-gold)", marginBottom: "1rem" }}>🔗 Join a Raid</div>
+            <div style={{ marginBottom: ".85rem" }}>
+              <Label style={{ display: "block", marginBottom: ".4rem" }}>Room Code</Label>
+              <InputField value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} placeholder="Enter 6-digit code…" style={{ letterSpacing: ".2em", fontFamily: "var(--font-heading)" }}
+                onKeyDown={e => e.key === "Enter" && handleJoinRoom()} />
+            </div>
+            <Btn variant="gold" style={{ width: "100%", marginBottom: "1rem" }} onClick={() => handleJoinRoom()}>Join Raid</Btn>
+          </Card>
+
+          {/* Live Waiting Room */}
+          {liveRoom && (
+            <div style={{ gridColumn: "1/-1" }}>
+              <Card glow>
+                {/* Mission Briefing header */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
+                  <div>
+                    <div style={{ fontFamily: "var(--font-heading)", fontSize: ".68rem", letterSpacing: ".15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: ".3rem" }}>
+                      🎯 Mission Briefing
+                    </div>
+                    <div style={{ fontFamily: "var(--font-heading)", fontSize: "1.2rem" }}>
+                      {liveRoom.boss} {liveRoom.name}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: ".4rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: ".4rem" }}>
+                        <Label>Code:</Label>
+                        <span style={{ fontFamily: "var(--font-heading)", color: "var(--accent-gold)", fontSize: "1rem", letterSpacing: ".2em" }}>{liveRoom.code}</span>
+                        <button onClick={() => { navigator.clipboard.writeText(liveRoom.code); push("Copied!", "success"); }}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: ".8rem" }}>📋</button>
+                      </div>
+                      <Label>{liveRoom.duration}min · {liveMembers.length}/6 warriors</Label>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+                    <Btn variant="ghost" size="sm" onClick={() => leaveLiveRoom()}>Leave</Btn>
+                    <Btn variant="primary" onClick={handleStartRaid}>
+                      ⚔️ Start Raid ({liveMembers.length})
+                    </Btn>
+                  </div>
+                </div>
+
+                <RuneDivider />
+
+                {/* Live squad list */}
+                <div style={{ marginTop: "1rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".75rem" }}>
+                    <SectionTitle>⚔️ Warriors ({liveMembers.length}/6)</SectionTitle>
+                    {!isHost && <Label style={{ color: "var(--text-muted)" }}>Waiting for host to start…</Label>}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: ".75rem" }}>
+                    {liveMembers.map((m, i) => (
+                      <div key={m.id} style={{
+                        background: "var(--bg-elevated)", border: `1px solid ${m.user_id === liveRoom.host_id ? "rgba(124,92,224,.4)" : "var(--border)"}`,
+                        borderRadius: 8, padding: ".75rem", display: "flex", flexDirection: "column",
+                        alignItems: "center", gap: ".35rem", minWidth: 90, position: "relative",
+                        animation: "fadeSlideUp .3s ease",
+                      }}>
+                        {/* Avatar */}
+                        {m.photo_url
+                          ? <img src={m.photo_url} style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--accent-violet)" }} alt="" />
+                          : <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--bg-surface)", border: "2px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.4rem" }}>{m.avatar_emoji}</div>
+                        }
+                        {/* Name */}
+                        <div style={{ fontFamily: "var(--font-heading)", fontSize: ".7rem", color: "var(--text-secondary)", textAlign: "center", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.display_name}</div>
+                        {/* Device indicator */}
+                        <div style={{ fontFamily: "var(--font-heading)", fontSize: ".6rem", color: "var(--text-muted)" }}>
+                          {m.device === "mobile" ? "📱" : "💻"}
+                        </div>
+                        {/* Host badge */}
+                        {m.user_id === liveRoom.host_id && (
+                          <div style={{ position: "absolute", top: -6, right: -6, background: "var(--accent-gold)", color: "#1a1200", borderRadius: 10, padding: ".1rem .4rem", fontFamily: "var(--font-heading)", fontSize: ".55rem", fontWeight: 700 }}>HOST</div>
+                        )}
+                        {/* Online pulse */}
+                        <div style={{ position: "absolute", bottom: 6, left: 6, width: 7, height: 7, borderRadius: "50%", background: "var(--accent-green)", boxShadow: "0 0 6px var(--accent-green)", animation: "ring-pulse 2s ease-in-out infinite" }} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Invite friends shortcut */}
+                {!profile?.is_guest && friends.filter(f => f.status === "accepted").length > 0 && (
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+                    <SectionTitle style={{ marginBottom: ".6rem" }}>⚡ Quick Invite Friends</SectionTitle>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: ".5rem" }}>
+                      {friends.filter(f => f.status === "accepted").map(f => (
+                        <button key={f.friendshipId} onClick={() => handleInviteFriend(f.id)} style={{
+                          display: "flex", alignItems: "center", gap: ".5rem", padding: ".4rem .75rem",
+                          background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 20,
+                          cursor: "pointer", fontFamily: "var(--font-heading)", fontSize: ".72rem",
+                          color: "var(--text-secondary)", transition: "all .2s",
+                        }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--accent-green)"; e.currentTarget.style.color = "var(--accent-green)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-secondary)"; }}>
+                          {f.photo_url
+                            ? <img src={f.photo_url} style={{ width: 20, height: 20, borderRadius: "50%", objectFit: "cover" }} alt="" />
+                            : <span>{f.avatar_emoji}</span>
+                          }
+                          {f.display_name} ⚔️
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── FRIENDS PANEL ── */}
+      {activePanel === "friends" && (
+        <div style={{ width: "100%", maxWidth: 1000 }}>
+          {profile?.is_guest ? (
+            <Card>
+              <div style={{ textAlign: "center", padding: "2rem", fontFamily: "var(--font-heading)" }}>
+                <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>👥</div>
+                <div style={{ fontSize: "1rem", color: "var(--text-primary)", marginBottom: ".5rem" }}>Friends require an account</div>
+                <div style={{ fontSize: ".8rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>Sign in with Google to add friends and invite them to raids.</div>
+                <Btn variant="primary" onClick={signOut}>Sign In with Google</Btn>
+              </div>
+            </Card>
+          ) : (
+            <Card>
+              <FriendsPanel
+                friends={friends}
+                onSearch={searchByEmail}
+                onAdd={sendFriendRequest}
+                onRespond={respondFriendRequest}
+                onRemove={removeFriend}
+                onInvite={handleInviteFriend}
+                hasRoom={!!liveRoom}
+              />
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* ── Profile Edit Modal ── */}
       <Modal open={profileOpen} onClose={() => setProfileOpen(false)} maxWidth={480}>
@@ -269,79 +379,30 @@ export default function LobbyScreen({ player, onUpdatePlayer, onStartRaid }) {
           <div style={{ fontFamily: "var(--font-heading)", fontSize: "1.1rem", color: "var(--accent-violet)" }}>⚔️ Edit Profile</div>
           <Btn variant="ghost" size="sm" onClick={() => setProfileOpen(false)}>✕</Btn>
         </div>
-
-        {/* ── Photo upload area ── */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: "1.5rem", gap: ".75rem" }}>
-
-          {/* Preview circle */}
           <div style={{ position: "relative" }}>
-            {previewUrl ? (
-              <img src={previewUrl} alt="preview" style={{ width: 90, height: 90, borderRadius: "50%", objectFit: "cover", border: "3px solid var(--accent-violet)", display: "block" }} />
-            ) : (
-              <div style={{ width: 90, height: 90, borderRadius: "50%", background: "var(--bg-elevated)", border: "3px solid var(--accent-violet)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "2.8rem" }}>
-                {editAvatar}
-              </div>
-            )}
-            {/* Camera overlay button */}
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              style={{ position: "absolute", bottom: 0, right: 0, width: 28, height: 28, borderRadius: "50%", background: "var(--accent-violet)", border: "2px solid var(--bg-card)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: ".9rem" }}
-              title="Upload photo"
-            >
-              📷
-            </div>
+            {previewUrl
+              ? <img src={previewUrl} alt="preview" style={{ width: 90, height: 90, borderRadius: "50%", objectFit: "cover", border: "3px solid var(--accent-violet)", display: "block" }} />
+              : <div style={{ width: 90, height: 90, borderRadius: "50%", background: "var(--bg-elevated)", border: "3px solid var(--accent-violet)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "2.8rem" }}>{editAvatar}</div>
+            }
+            <div onClick={() => fileInputRef.current?.click()}
+              style={{ position: "absolute", bottom: 0, right: 0, width: 28, height: 28, borderRadius: "50%", background: "var(--accent-violet)", border: "2px solid var(--bg-card)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: ".9rem" }}>📷</div>
           </div>
-
-          {/* Drag & drop zone */}
-          <div
-            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
+          <div onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={e => { e.preventDefault(); setDragOver(false); handleImageFile(e.dataTransfer.files?.[0]); }}
             onClick={() => fileInputRef.current?.click()}
-            style={{
-              width: "100%", padding: ".75rem", borderRadius: 8, cursor: "pointer",
-              border: `2px dashed ${dragOver ? "var(--accent-violet)" : "var(--border)"}`,
-              background: dragOver ? "rgba(124,92,224,.08)" : "transparent",
-              textAlign: "center", transition: "all .2s",
-            }}
-          >
+            style={{ width: "100%", padding: ".75rem", borderRadius: 8, cursor: "pointer", border: `2px dashed ${dragOver ? "var(--accent-violet)" : "var(--border)"}`, background: dragOver ? "rgba(124,92,224,.08)" : "transparent", textAlign: "center", transition: "all .2s" }}>
             <div style={{ fontFamily: "var(--font-heading)", fontSize: ".72rem", color: dragOver ? "var(--accent-violet)" : "var(--text-muted)", letterSpacing: ".08em" }}>
               {uploading ? "⏳ Uploading…" : "📁 Click or drag & drop an image"}
             </div>
-            <div style={{ fontFamily: "var(--font-heading)", fontSize: ".6rem", color: "var(--text-muted)", marginTop: ".25rem" }}>
-              JPG, PNG, GIF, WebP · Max 5MB
-            </div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: ".6rem", color: "var(--text-muted)", marginTop: ".25rem" }}>JPG, PNG, GIF, WebP · Max 5MB</div>
           </div>
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={handleFileInput}
-          />
-
-          {/* Remove photo button */}
-          {previewUrl && (
-            <Btn variant="ghost" size="sm" onClick={removePhoto}>
-              🗑 Remove Photo
-            </Btn>
-          )}
+          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => handleImageFile(e.target.files?.[0])} />
+          {previewUrl && <Btn variant="ghost" size="sm" onClick={() => { setUploadFile(null); setPreviewUrl(""); }}>🗑 Remove Photo</Btn>}
         </div>
-
-        {/* Display name */}
         <div style={{ marginBottom: "1rem" }}>
           <Label style={{ display: "block", marginBottom: ".4rem" }}>Display Name</Label>
-          <InputField
-            value={editName}
-            onChange={e => setEditName(e.target.value)}
-            placeholder="Enter warrior name…"
-            onKeyDown={e => e.key === "Enter" && saveProfile()}
-          />
+          <InputField value={editName} onChange={e => setEditName(e.target.value)} placeholder="Enter warrior name…" onKeyDown={e => e.key === "Enter" && saveProfile()} />
         </div>
-
-        {/* Email read-only */}
         {profile?.email && (
           <div style={{ marginBottom: "1rem" }}>
             <Label style={{ display: "block", marginBottom: ".4rem" }}>Email</Label>
@@ -351,31 +412,20 @@ export default function LobbyScreen({ player, onUpdatePlayer, onStartRaid }) {
             </div>
           </div>
         )}
-
         <RuneDivider />
-
-        {/* Avatar emoji picker */}
         <div style={{ margin: "1rem 0" }}>
           <Label style={{ display: "block", marginBottom: ".6rem" }}>Warrior Avatar <span style={{ color: "var(--text-muted)", fontSize: ".6rem" }}>(used when no photo)</span></Label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
             {AVATARS.map(a => (
-              <span key={a} onClick={() => setEditAvatar(a)} style={{
-                fontSize: "1.8rem", cursor: "pointer", padding: ".3rem", borderRadius: 6,
-                border: `2px solid ${editAvatar === a ? "var(--accent-violet)" : "transparent"}`,
-                background: editAvatar === a ? "rgba(124,92,224,.12)" : "transparent",
-                transition: "all .15s",
-              }}>{a}</span>
+              <span key={a} onClick={() => setEditAvatar(a)} style={{ fontSize: "1.8rem", cursor: "pointer", padding: ".3rem", borderRadius: 6, border: `2px solid ${editAvatar === a ? "var(--accent-violet)" : "transparent"}`, background: editAvatar === a ? "rgba(124,92,224,.12)" : "transparent", transition: "all .15s" }}>{a}</span>
             ))}
           </div>
         </div>
-
-        {/* Guest nudge */}
         {profile?.is_guest && (
           <div style={{ background: "rgba(245,200,66,.08)", border: "1px solid rgba(245,200,66,.2)", borderRadius: 8, padding: ".75rem 1rem", marginBottom: "1rem", fontFamily: "var(--font-heading)", fontSize: ".75rem", color: "var(--accent-gold)", lineHeight: 1.6 }}>
             🌟 Sign in with Google to sync your profile and XP across all devices!
           </div>
         )}
-
         <div style={{ display: "flex", gap: ".75rem", marginTop: "1rem" }}>
           <Btn variant="ghost" style={{ flex: 1 }} onClick={() => setProfileOpen(false)}>Cancel</Btn>
           <Btn variant="primary" style={{ flex: 2 }} onClick={saveProfile} disabled={saving || uploading || !editName.trim()}>

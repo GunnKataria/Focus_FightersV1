@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useApp } from "../../context/AppContext";
+import { useAuth } from "../../context/AuthContext";
 import { DEMO_SQUAD, STUDY_PAGES, DEFAULT_QUESTS, BOSS_NAMES, QUIZ_QUESTIONS } from "../../constants";
 import { formatTime } from "../../utils/formatTime";
 import Btn from "../../components/ui/Btn";
@@ -14,18 +15,47 @@ import NotesTab from "./tabs/NotesTab";
 import AiTab from "./tabs/AiTab";
 
 export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) {
-  const { push } = useApp();
+  const { push, multiplayer } = useApp();
+  const { profile } = useAuth();
+  const liveMembers = multiplayer?.liveMembers ?? [];
+  const liveRoom    = multiplayer?.liveRoom ?? room;
+
+  // Derive squad from real room members (everyone except self). Falls back
+  // to DEMO_SQUAD only when there's no multiplayer room (solo dev runs).
+  const remoteSquad = useMemo(() => {
+    if (!liveMembers.length) return DEMO_SQUAD.map((p) => ({ ...p }));
+    return liveMembers
+      .filter((m) => m.user_id !== profile?.id)
+      .map((m) => ({
+        id:     m.user_id,
+        name:   m.display_name,
+        avatar: m.avatar_emoji,
+        photo:  m.photo_url,
+        status: m.status || "focused",
+      }));
+  }, [liveMembers, profile?.id]);
+
+  // Shared session clock: every client computes secondsLeft from the same
+  // server-stamped started_at (set by host's startLiveRoom). Without this
+  // each client's countdown drifts independently.
+  const initialSeconds = (() => {
+    const dur = (liveRoom?.duration || room?.duration || 25) * 60;
+    const startedAt = liveRoom?.started_at || room?.started_at;
+    if (!startedAt) return dur;
+    const elapsed = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+    return Math.max(0, dur - elapsed);
+  })();
 
   // ── Combat state ──────────────────────────────────────────
   const [bossHP, setBossHP] = useState(1000);
   const [bossMaxHP] = useState(1000);
   const [teamHP, setTeamHP] = useState(500);
   const [teamMaxHP] = useState(500);
-  const [secondsLeft, setSecondsLeft] = useState((room?.duration || 25) * 60);
+  const [secondsLeft, setSecondsLeft] = useState(initialSeconds);
   const [focused, setFocused] = useState(true);
   const [focusStreak, setFocusStreak] = useState(0);
   const [totalDamage, setTotalDamage] = useState(0);
-  const [squad, setSquad] = useState(DEMO_SQUAD.map((p) => ({ ...p })));
+  const [squad, setSquad] = useState(() => remoteSquad);
   const [damageNums, setDamageNums] = useState([]);
   const [bossShaking, setBossShaking] = useState(false);
   const [teamHpShaking, setTeamHpShaking] = useState(false);
@@ -72,10 +102,17 @@ export default function GameScreen({ player, room, onUpdatePlayer, onGoLobby }) 
   const sessionRunningRef = useRef(true);
   const bossHPRef = useRef(1000);
   const teamHPRef = useRef(500);
-  const secondsRef = useRef((room?.duration || 25) * 60);
+  const secondsRef = useRef(initialSeconds);
   const totalDamageRef = useRef(0);
   const focusStreakRef = useRef(0);
-  const squadRef = useRef(DEMO_SQUAD.map((p) => ({ ...p })));
+  const squadRef = useRef(remoteSquad);
+
+  // Keep the in-game squad mirrored when remote members change (joins/leaves
+  // mid-raid). Preserves any local status mutations for unchanged users.
+  useEffect(() => {
+    squadRef.current = remoteSquad;
+    setSquad(remoteSquad);
+  }, [remoteSquad]);
 
   // Keep refs in sync with state
   useEffect(() => { focusedRef.current = focused; }, [focused]);

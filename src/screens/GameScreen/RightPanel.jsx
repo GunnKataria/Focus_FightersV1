@@ -182,10 +182,14 @@ export default function RightPanel({
         <div
           style={{
             flex: 1,
+            maxHeight: 260,
             overflowY: "auto",
             display: "flex",
             flexDirection: "column",
             gap: ".25rem",
+            paddingRight: ".5rem",
+            scrollbarWidth: "thin",
+            scrollbarColor: "var(--accent-violet) transparent",
           }}
         >
           {combatLog.map((entry, i) => (

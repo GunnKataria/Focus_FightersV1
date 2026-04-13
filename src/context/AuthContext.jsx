@@ -14,38 +14,41 @@ export function AuthProvider({ children }) {
     if (!user) { setProfile(null); return; }
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from("ff_profiles")
         .select("*")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code === "PGRST116") {
-        // No row yet — create one
-        const newProfile = {
-          id:           user.id,
-          display_name: user.user_metadata?.full_name ?? user.email ?? "Warrior",
-          avatar_emoji: "🧙",
-          photo_url:    user.user_metadata?.avatar_url ?? null,
-          email:        user.email ?? null,
-          is_guest:     false,
-        };
-        const { data: created, error: insertError } = await supabase
-          .from("profiles")
-          .insert(newProfile)
-          .select()
-          .single();
-
-        if (insertError) {
-          console.error("Profile insert error:", insertError);
-          setProfile({ ...newProfile, xp: 0, coins: 0, level: 1, xp_to_next: 100 });
-        } else {
-          setProfile(created);
-        }
-      } else if (error) {
+      if (error) {
         console.error("Profile fetch error:", error);
         setProfile(null);
-      } else {
+        return;
+      }
+
+      if (data) {
         setProfile(data);
+        return;
+      }
+
+      const newProfile = {
+        id:           user.id,
+        display_name: user.user_metadata?.full_name ?? user.email ?? "Warrior",
+        avatar_emoji: "🧙",
+        photo_url:    user.user_metadata?.avatar_url ?? null,
+        email:        user.email ?? null,
+        is_guest:     false,
+      };
+      const { data: upserted, error: upsertError } = await supabase
+        .from("ff_profiles")
+        .upsert(newProfile, { onConflict: "id", ignoreDuplicates: false })
+        .select()
+        .maybeSingle();
+
+      if (upsertError) {
+        console.error("Profile upsert error:", upsertError);
+        setProfile({ ...newProfile, xp: 0, coins: 0, level: 1, xp_to_next: 100 });
+      } else {
+        setProfile(upserted);
       }
     } catch (err) {
       console.error("loadProfile crashed:", err);
@@ -54,15 +57,15 @@ export function AuthProvider({ children }) {
   };
 
   // ── Guest profile (localStorage only) ───────────────────────
-  const loadGuestProfile = () => {
+  const loadGuestProfile = (name) => {
     const stored = localStorage.getItem("ff_guest_profile");
-    if (stored) {
+    if (stored && !name) {
       setProfile(JSON.parse(stored));
     } else {
-      const names = ["Shadow", "Blaze", "Storm", "Nova", "Vex"];
+      const fallback = ["Shadow", "Blaze", "Storm", "Nova", "Vex"];
       const guest = {
         id:           "guest",
-        display_name: names[Math.floor(Math.random() * names.length)] + Math.floor(Math.random() * 99),
+        display_name: name?.trim() || (fallback[Math.floor(Math.random() * fallback.length)] + Math.floor(Math.random() * 99)),
         avatar_emoji: "🧙",
         photo_url:    null,
         email:        null,
@@ -82,15 +85,17 @@ export function AuthProvider({ children }) {
     // Safety net — never stuck loading more than 6s
     const timeout = setTimeout(() => setAuthLoading(false), 6000);
 
+    // Wipe any legacy local-only guest profile (id:"guest") — those break RLS.
+    try {
+      const legacy = localStorage.getItem("ff_guest_profile");
+      if (legacy && JSON.parse(legacy).id === "guest") localStorage.removeItem("ff_guest_profile");
+    } catch {}
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       clearTimeout(timeout);
       setSession(session);
       if (session?.user) {
         await loadProfile(session.user);
-      } else {
-        // Check if guest was active
-        const guest = localStorage.getItem("ff_guest_profile");
-        if (guest) setProfile(JSON.parse(guest));
       }
       setAuthLoading(false);
     });
@@ -114,14 +119,38 @@ export function AuthProvider({ children }) {
   const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { queryParams: { access_type: "offline", prompt: "consent" } },
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { access_type: "offline", prompt: "consent" },
+      },
     });
     if (error) console.error("Google sign-in error:", error.message);
   };
 
-  const signInAsGuest = () => {
-    setSession(null);
-    loadGuestProfile();
+  const signInAsGuest = async (name) => {
+    const { data, error } = await supabase.auth.signInAnonymously();
+    if (error) {
+      console.error("Anonymous sign-in failed — enable Anonymous Sign-Ins in Supabase dashboard:", error);
+      alert("Anonymous sign-in is disabled in Supabase. Enable it in Dashboard → Auth → Sign In/Up → Anonymous Sign-Ins, then retry.");
+      return;
+    }
+    const user = data.user;
+    setSession(data.session);
+    const newProfile = {
+      id:           user.id,
+      display_name: name?.trim() || "Warrior",
+      avatar_emoji: "🧙",
+      photo_url:    null,
+      email:        null,
+      is_guest:     false,
+    };
+    const { data: upserted, error: upsertErr } = await supabase
+      .from("ff_profiles")
+      .upsert(newProfile, { onConflict: "id" })
+      .select()
+      .maybeSingle();
+    if (upsertErr) console.error("Profile upsert error:", upsertErr);
+    setProfile(upserted ?? { ...newProfile, xp: 0, coins: 0, level: 1, xp_to_next: 100 });
   };
 
   const signOut = async () => {
@@ -143,7 +172,7 @@ export function AuthProvider({ children }) {
       setProfile(updated);
     } else {
       const { data, error } = await supabase
-        .from("profiles")
+        .from("ff_profiles")
         .update(updates)
         .eq("id", profile.id)
         .select()

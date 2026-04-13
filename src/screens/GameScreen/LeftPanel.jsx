@@ -136,6 +136,51 @@ export default function LeftPanel({
 
       <RuneDivider glyph="⚔" />
 
+      {/* Room code share */}
+      {room?.code && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: ".5rem",
+            padding: ".55rem .75rem",
+            background: "rgba(124,92,224,.12)",
+            border: "1px solid var(--accent-violet)",
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontFamily: "var(--font-heading)", fontSize: ".58rem", letterSpacing: ".12em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              Room Code
+            </span>
+            <span style={{ fontFamily: "var(--font-display)", fontSize: "1.05rem", letterSpacing: ".15em", color: "var(--text-primary)" }}>
+              {room.code}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(room.code);
+              const el = document.getElementById("ff-copy-tip");
+              if (el) { el.textContent = "Copied!"; setTimeout(() => { el.textContent = "Copy"; }, 1200); }
+            }}
+            style={{
+              fontFamily: "var(--font-heading)",
+              fontSize: ".7rem",
+              letterSpacing: ".08em",
+              padding: ".4rem .75rem",
+              background: "var(--accent-violet)",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            <span id="ff-copy-tip">Copy</span>
+          </button>
+        </div>
+      )}
+
       {/* Squad */}
       <div>
         <SectionTitle>⚔️ Your Squad</SectionTitle>
