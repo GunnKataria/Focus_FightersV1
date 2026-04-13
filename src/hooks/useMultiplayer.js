@@ -13,22 +13,29 @@ export function useMultiplayer(profile) {
   const friendsChannelRef = useRef(null);
   const currentRoomIdRef  = useRef(null);
   const loadingRef        = useRef(false);
+  const pollIntervalRef   = useRef(null);
 
   const userId  = profile?.id;
   const isGuest = profile?.is_guest;
 
   // ── Fetch members ─────────────────────────────────────────
   const fetchMembers = useCallback(async (roomId) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("ff_room_members")
       .select("*")
       .eq("room_id", roomId)
       .order("joined_at", { ascending: true });
+    console.log(`[MP] fetchMembers(${roomId?.slice(-6)}) →`, data?.length ?? 0, "rows", error ? `ERR: ${error.message}` : "");
+    if (error) console.error("[MP] fetchMembers error:", error);
     if (data) setLiveMembers(data);
   }, []);
 
   // ── Unsubscribe room ──────────────────────────────────────
   const unsubscribeRoom = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     if (roomChannelRef.current) {
       supabase.removeChannel(roomChannelRef.current);
       roomChannelRef.current = null;
@@ -38,7 +45,11 @@ export function useMultiplayer(profile) {
 
   // ── Subscribe to room ─────────────────────────────────────
   const subscribeToRoom = useCallback((roomId) => {
-    if (currentRoomIdRef.current === roomId) return;
+    if (currentRoomIdRef.current === roomId) {
+      console.log(`[MP] subscribeToRoom(${roomId?.slice(-6)}) — guard fired, already subscribed`);
+      return;
+    }
+    console.log(`[MP] subscribeToRoom(${roomId?.slice(-6)}) — creating channel for user ${userId?.slice(-6)}`);
     unsubscribeRoom();
     currentRoomIdRef.current = roomId;
     fetchMembers(roomId);
@@ -46,8 +57,9 @@ export function useMultiplayer(profile) {
     const channel = supabase
       .channel(`room:${roomId}:${userId}`)
       .on("postgres_changes",
-        { event: "*", schema: "public", table: "rooms", filter: `id=eq.${roomId}` },
+        { event: "*", schema: "public", table: "ff_rooms", filter: `id=eq.${roomId}` },
         (payload) => {
+          console.log(`[MP] ff_rooms payload event=${payload.eventType}`, payload.new ?? payload.old);
           if (payload.eventType === "DELETE") {
             setLiveRoom(null); setLiveMembers([]); unsubscribeRoom();
           } else if (payload.new) {
@@ -56,14 +68,34 @@ export function useMultiplayer(profile) {
         }
       )
       .on("postgres_changes",
-        { event: "*", schema: "public", table: "room_members", filter: `room_id=eq.${roomId}` },
-        () => fetchMembers(roomId)
+        { event: "*", schema: "public", table: "ff_room_members", filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          console.log(`[MP] ff_room_members payload event=${payload.eventType}`, payload.new ?? payload.old);
+          fetchMembers(roomId);
+        }
       )
       .subscribe((status) => {
+        console.log(`[MP] channel status → ${status} (room ${roomId?.slice(-6)})`);
         if (status === "SUBSCRIBED") fetchMembers(roomId);
       });
 
     roomChannelRef.current = channel;
+
+    // ── Polling fallback ──────────────────────────────────────
+    // Belt-and-braces: even if realtime postgres_changes events are missed,
+    // every 2 s we re-fetch members and the room row so status transitions
+    // (e.g. waiting → active) are always picked up by both clients.
+    pollIntervalRef.current = setInterval(async () => {
+      const rid = currentRoomIdRef.current;
+      if (!rid) return;
+      fetchMembers(rid);
+      const { data: roomData } = await supabase
+        .from("ff_rooms")
+        .select("*")
+        .eq("id", rid)
+        .maybeSingle();
+      if (roomData) setLiveRoom(roomData);
+    }, 2000);
   }, [userId, fetchMembers, unsubscribeRoom]);
 
   // ── Friends ───────────────────────────────────────────────
@@ -373,7 +405,7 @@ export function useMultiplayer(profile) {
     const inviteCh = supabase
       .channel(`invites:${userId}`)
       .on("postgres_changes",
-        { event: "INSERT", schema: "public", table: "invites", filter: `to_id=eq.${userId}` },
+        { event: "INSERT", schema: "public", table: "ff_invites", filter: `to_id=eq.${userId}` },
         async (payload) => {
           const { data: sender } = await supabase
             .from("ff_profiles").select("display_name, avatar_emoji, photo_url")
@@ -389,11 +421,11 @@ export function useMultiplayer(profile) {
     const friendsCh = supabase
       .channel(`friends:${userId}`)
       .on("postgres_changes",
-        { event: "*", schema: "public", table: "friends", filter: `requester_id=eq.${userId}` },
+        { event: "*", schema: "public", table: "ff_friends", filter: `requester_id=eq.${userId}` },
         () => fetchFriends()
       )
       .on("postgres_changes",
-        { event: "*", schema: "public", table: "friends", filter: `addressee_id=eq.${userId}` },
+        { event: "*", schema: "public", table: "ff_friends", filter: `addressee_id=eq.${userId}` },
         () => fetchFriends()
       ).subscribe();
 
